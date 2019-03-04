@@ -243,7 +243,7 @@ class cyBot():
         return
       self.bot.sendDocument(chat_id=self.chat_id,reply_to_message_id=self.message_id,document=txt[1])
     elif command == "/save" and self.replytomessage and sudo:
-      self.bot.forwardMessage(chat_id=self.log_channel, from_chat_id=self.chat_id, message_id=self.target_message_id)
+      self.bot.forwardMessage(chat_id=self.backup_channel, from_chat_id=self.chat_id, message_id=self.target_message_id)
     elif command == "/cynet":
       links_list = [
         [
