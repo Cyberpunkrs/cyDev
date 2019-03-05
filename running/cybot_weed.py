@@ -1,0 +1,435 @@
+from time import sleep
+import telegram
+from telegram.error import NetworkError, Unauthorized
+import unicodedata
+from threading import Thread
+from praw import Reddit
+from twitter import Api
+import sqlite3
+import socket
+from uuid import uuid4
+
+update_id = None
+token = ""
+reddit = Reddit(client_id='',
+           client_secret='',
+           password='',
+           user_agent='thedirector00',
+           username='')
+
+class main():
+  
+  def runBot(self, bot):
+    self.bot = bot
+    try:
+      update_id = self.bot.getUpdates()[0]['update_id']
+    except IndexError:
+      update_id = None
+    print("last update_id {}".format(update_id))
+    sleep(1)
+    while True:
+      try:
+        for update in self.bot.getUpdates(offset=update_id, timeout=4):
+          print("update > {}".format(update))
+          update_id = update.update_id + 1
+          try:
+            thBot = Thread(target=cyBot,args=[bot,update])
+            thBot.start()
+            #cyBot(bot, update)
+          except:
+            pass
+          sleep(0.4)
+      except NetworkError:
+        sleep(1)
+      except Unauthorized:
+        # The user has removed or blocked the bot.
+        update_id += 1
+    
+
+class socialNet():
+  global reddit
+  def twPost(self, content):
+    api = Api(consumer_key='',
+            consumer_secret='',
+            access_token_key='',
+            access_token_secret='')
+    hashtag = ''
+    
+    if not len(content["hashtags"]):
+      return False
+
+    for ht in content["hashtags"]:
+      hashtag += ht + " "
+    tweet = "{} {} {}".format(hashtag, content["title"], content["url"])
+    api.PostUpdate(tweet)
+    #print(tweet)
+
+  
+  def rdSubmit(self, post):
+    
+    originalrd = reddit.subreddit("cyberpub").submit(post["title"], url=post["url"])
+    print("\n\t{}".format(originalrd["id"]))
+    #crs = reddit.submission(id=originalrd["id"])
+    #crs.crosspost(subreddit="cryptobrasil", send_replies=False)
+    #sleep(6)
+    #reddit.subreddit("cryptobrasil").submit(post["title"], url=post["url"])
+    
+
+    
+    
+class misc():
+
+  def isAdm(user_id, admin_list):
+    for adm in admin_list:
+      admid = adm.user.id
+      if admid == user_id:
+        return True
+    return False
+  
+  def isArabic(first_name):
+    for letter in first_name:
+      try:
+        encoding = unicodedata.name(letter).lower()
+        if 'arabic' in encoding or 'persian' in encoding:
+          return True
+      except ValueError:
+        pass
+    return False
+
+  def parserEntities(entities, post):
+    titlechk = False
+    urlchk = False
+    title = ''
+    url = ''
+    hashtags = []
+
+    for entity in entities:
+      if entity.type == "hashtag":
+        offset = entity.offset
+        length = offset + entity.length
+        hashtags.append(post[offset:length])
+
+      elif entity.type == "bold" and not titlechk:
+        titlechk = True
+        offset = entity.offset
+        length = offset + entity.length
+        title = post[offset:length]
+
+      elif entity.type == "url" and not urlchk:
+        urlchk = True
+        offset = entity.offset
+        length = offset + entity.length
+        url = post[offset:length]
+
+    if not titlechk or not urlchk:
+      return False
+
+    response = {"hashtags": hashtags, "title": title, "url": url}
+    return response
+
+class cyBot():
+  allowed_chats = [-1001218498698, -1001171687704, -1001252516868, -395257705]
+  allowed_channels = [-1001183412743, -1001308153582, -1001428687999, -1001410198217, -1001446957910, -1001257020477, -1001183412743]
+  mimetypes = ["application/pdf", "application/epub+zip", "application/x-mobipocket-ebook", "application/msword", "application/x-bittorrent", "text/plain", "application/x-rar-compressed", "application/zip", "application/x-7z-compressed", "audio/mpeg", "audio/mp3", "application/octet-stream"]
+  misc = misc()
+  log_channel = "-1001183412743"
+  file_channel = "-1001183412743"
+  replytomessage = False
+  
+
+  def __init__(self, bot, update):
+    if update and update.message or update.channel_post or update.callback_query or update.inline_query:
+      self.bot = bot
+      self.update = update
+      conn = sqlite3.connect('cyfiles.db')
+      db = conn.cursor()
+      try:
+        self.chat_id = self.update.message.chat.id
+        self.message_id = self.update.message.message_id
+      except:
+        pass
+    else:
+      return
+
+    
+    
+    if self.update.message:
+      if self.update.message.reply_to_message:
+        self.replytomessage = True
+        self.target_user_id = self.update.message.reply_to_message.from_user.id
+        self.target_message_id = self.update.message.reply_to_message.message_id
+        self.target_fname = self.update.message.reply_to_message.from_user.first_name
+        self.target_username = update.message.reply_to_message.from_user.username
+    
+      if self.update.message.document:
+          file_id = self.update.message.document.file_id
+          file_name = self.update.message.document.file_name
+          file_size = self.update.message.document.file_size
+          file_mimetype = self.update.message.document.mime_type
+          file_by = update.message.from_user.id
+          # make backup of file
+          if file_mimetype in self.mimetypes:
+            file_data = "`{id}` -- *{name}*\n_{size}_ | {mimetype}\n\nby: `#id{uid}`".format(id=file_id,name=file_name,size=file_size,mimetype=file_mimetype,uid=file_by)
+            
+            try:
+              db.execute('insert into files values ("", ?, ?, ?, ?, ?)', (file_id, file_name, file_size, file_mimetype, file_by))
+              conn.commit()
+              self.bot.sendDocument(chat_id=self.file_channel, caption=file_data, parse_mode="Markdown", document=file_id, disable_notification=1)
+            except sqlite3.IntegrityError:
+              conn.close()
+              return
+      
+      if self.update.message.new_chat_members:
+          for member in self.update.message.new_chat_members:
+            if misc.isArabic(member.first_name):
+              self.bot.kickChatMember(chat_id=self.chat_id, user_id=member.id)
+              self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="HTML", text="<b>[ban]</b>  <i>allahu akabur!1!</i>")
+              return
+            fname = member.first_name.replace('_', '\_')
+            log_nmember = "{fname}\n`#id{id}`\n\nIn: {ctitle}\n> [{fname}](tg://user?id={id})".format(fname=fname,id=member.id,ctitle=update.message.chat.id)
+            
+            self.bot.restrictChatMember(chat_id=self.chat_id, user_id=member.id, until_date=None, can_send_messages=0, can_send_media_messages=0, can_send_other_messages=0, can_add_web_page_previews=0)
+            
+            self.bot.sendMessage(chat_id=self.log_channel, parse_mode="Markdown", text=log_nmember)
+            captcha = [
+              [
+                telegram.InlineKeyboardButton("ClickMe",callback_data=member.id)
+              ]
+            ]
+
+            reply_markup = telegram.InlineKeyboardMarkup(captcha)
+            self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text="**welcome!\n[simple user verification]**", reply_markup=reply_markup)
+    
+    
+    if self.update.callback_query:
+      tgcll = Thread(self.tgCallback())
+      tgcll.start()
+      #self.tgCallback()
+    
+    elif self.update.message and self.update.message.chat.id in self.allowed_chats:
+      tgmsg = Thread(self.tgMessage())
+      tgmsg.start()
+      #self.tgMessage()
+    
+    elif self.update.channel_post and self.update.channel_post.chat.id in self.allowed_channels:
+      tgchn = Thread(self.tgChannel())
+      tgchn.start()
+      #self.tgChannel()
+      
+    elif self.update.inline_query:
+      tginl = Thread(self.tgInline())
+      tginl.start()
+      #self.tgInline()
+    
+    
+
+  def tgMessage(self):
+    if not self.update.message.text:
+      return
+    backup_channel = "@pr1v8_board"
+    admin_list = self.bot.getChatAdministrators(chat_id=self.chat_id)
+    user_id = self.update.message.from_user.id
+    user_fname = self.update.message.from_user.first_name
+    sudo = misc.isAdm(user_id, admin_list)
+    txt = self.update.message.text.split(" ")
+    command = txt[0]
+    remain_txt = ' '.join(txt[1:])
+    query = True
+
+    if not remain_txt:
+      remain_txt = "-"
+      query = False
+    
+    if command == "/getme":
+      me = self.bot.getMe()
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, text="@" + me.username)
+    elif command == "/sudo" and sudo:
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, text="hello root")
+    elif command == "/free" and self.replytomessage and sudo:
+      self.bot.restrictChatMember(chat_id=self.chat_id, user_id=self.target_user_id, until_date=None, can_send_messages=1, can_send_media_messages=1, can_send_other_messages=1, can_add_web_page_previews=1)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text="user liberado")
+    elif command == "/link":
+      link = self.bot.exportChatInviteLink(chat_id=self.chat_id)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, text=link)
+    elif command == "/afk" or command == "/off":
+      afk = "*user* [{fname}](tg://user?id={id}) *is afk*\n    *> {reason}*".format(fname=user_fname,id=user_id,reason=remain_txt)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=afk)
+    elif command == "/back" or command == "/on":
+      back = "*user* [{fname}](tg://user?id={id}) *is back*".format(fname=user_fname,id=user_id)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=back)
+    elif command == "/ban" and self.replytomessage and sudo:
+      ban = "*user* [{fname}](tg://user?id={id}) *banned*".format(fname=self.target_fname,id=self.target_user_id)
+      self.bot.kickChatMember(chat_id=self.chat_id, user_id=self.target_user_id)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=ban)
+    elif command == "/unban" and self.replytomessage and sudo:
+      unban = "*user* [{fname}](tg://user?id={id}) *unbanned*".format(fname=self.target_fname,id=self.target_user_id)
+      self.bot.unbanChatMember(chat_id=self.chat_id, user_id=self.target_user_id)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=unban)
+    elif command == "/mute" and self.replytomessage and sudo:
+      mute = "*user* [{fname}](tg://user?id={id}) *muted*".format(fname=self.target_fname,id=self.target_user_id)
+      self.bot.restrictChatMember(chat_id=self.chat_id, user_id=self.target_user_id, until_date=None, can_send_messages=0, can_send_media_messages=0, can_send_other_messages=0, can_add_web_page_previews=0)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=mute)
+    elif command == "/unmute" and self.replytomessage and sudo:
+      unmute = "*user* [{fname}](tg://user?id={id}) *unmuted*".format(fname=self.target_fname,id=self.target_user_id)
+      self.bot.restrictChatMember(chat_id=self.chat_id, user_id=self.target_user_id, until_date=None, can_send_messages=1, can_send_media_messages=1, can_send_other_messages=1, can_add_web_page_previews=1)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=unmute)
+    elif command == "/pin" and self.replytomessage and sudo:
+      self.bot.pinChatMessage(chat_id=self.chat_id, message_id=self.target_message_id,disable_notification=1)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text="*message pinned*")
+    elif command == "/uinfo" and self.replytomessage and sudo:
+      uinfo = "*user info* | [{fname}](tg://user?id={id})\nname: {fname}\nid: `#id{id}`\nusername: @{username}".format(fname=self.target_fname,id=self.target_user_id,username=self.target_username)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=uinfo)
+    elif command == "/ginfo":
+      gmember = self.bot.getChatMembersCount(chat_id=self.chat_id)
+      ginfo = "*group info* | [{title}](tg://chat?id={id})\nTitle: {title}\nid: `{id}`\nMembers: {count}".format(title=self.update.message.chat.title,id=self.chat_id,count=gmember)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=ginfo)
+    elif command == "/sendfile" and sudo:
+      if len(txt) != 2:
+        return
+      self.bot.sendDocument(chat_id=self.chat_id,reply_to_message_id=self.message_id,document=txt[1])
+    elif command == "/save" and self.replytomessage and sudo:
+      self.bot.forwardMessage(chat_id=self.log_channel, from_chat_id=self.chat_id, message_id=self.target_message_id)
+    elif command == "/cynet":
+      links_list = [
+        [
+          telegram.InlineKeyboardButton("cyPunkrs",url="https://t.me/joinchat/DE9ViFBkvVx65PpKfvtuZg"),
+          telegram.InlineKeyboardButton("R3neg4des",url="https://t.me/joinchat/DE9ViEUaKNz34rzPzqcjSA")
+        ],
+        [
+          telegram.InlineKeyboardButton("Parisburn", url="https://t.me/parisburns"),
+          telegram.InlineKeyboardButton("warezme",url="https://t.me/warezme")
+        ],
+        [
+          telegram.InlineKeyboardButton("r/cyberpub", url="https://www.reddit.com/r/cyberpub/"),
+          telegram.InlineKeyboardButton("Twitter", url="https://twitter.com/0xpr1v8")
+        ],
+        [
+          telegram.InlineKeyboardButton("cyGithub", url="https://github.com/cyberpunkrs/")
+        ]
+      ]   
+      reply_markup = telegram.InlineKeyboardMarkup(links_list)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, text="**cyNetwork**", parse_mode="Markdown", reply_markup=reply_markup)
+    elif command == "@adm":  
+      adms = ""
+      for adm in admin_list:
+        username = adm.user.username
+        if not username:
+          username = "null"
+        else:
+          username = "- @{}".format(username)
+        adms += "<a href=\"tg://user?id={id}\">{fname}</a> {username}\n".format(fname=adm.user.first_name,id=adm.user.id,username=username)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="HTML", text=adms)
+    elif command == "/rtfm":
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text="**read the fucking manual**\nhttps://en.wikipedia.org/wiki/RTFM")
+    elif command == "/w":
+      captcha = [
+        [
+          telegram.InlineKeyboardButton("me",callback_data='w')
+        ]
+      ]
+      reply_markup = telegram.InlineKeyboardMarkup(captcha)
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, text="**Quem ta on fdps**", parse_mode="Markdown", reply_markup=reply_markup)
+    elif command == "/src" and query:
+      host = "0.0.0.0"
+      port = 1984
+      with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(6)
+        s.connect((host, port))
+        s.sendall(remain_txt.encode())
+        data = s.recv(2048)
+      s.close()
+      self.bot.sendMessage(chat_id=self.chat_id, reply_to_message_id=self.message_id, parse_mode="Markdown", text=repr(data))
+      
+
+  def tgCallback(self):
+    cid = self.update.callback_query.message.chat.id
+    uid = str(self.update.callback_query.from_user.id)
+
+    if self.update.callback_query.data == uid:  
+      self.bot.restrictChatMember(chat_id=cid, user_id=self.update.callback_query.from_user.id, until_date=None, can_send_messages=1, can_send_media_messages=1, can_send_other_messages=1, can_add_web_page_previews=1)
+      
+      self.bot.deleteMessage(chat_id=cid, message_id=self.update.callback_query.message.message_id)
+        
+      self.bot.sendMessage(chat_id=cid, reply_to_message_id=self.update.callback_query.message.reply_to_message.message_id, parse_mode="HTML", text="user <b>{}</b> liberado".format(self.update.callback_query.from_user.first_name))
+    elif self.update.callback_query.data == 'w':
+      self.bot.sendMessage(chat_id=cid, reply_to_message_id=self.update.callback_query.message.reply_to_message.message_id, parse_mode="Markdown", text=" {} present@".format(self.update.callback_query.from_user.first_name))
+
+
+  def tgChannel(self):
+    #print("run channel\n\n")
+    snet = socialNet()
+    conn = sqlite3.connect('cyfiles.db')
+    db = conn.cursor()
+    if self.update.channel_post.document:
+      file_id = self.update.channel_post.document.file_id
+      file_name = self.update.channel_post.document.file_name
+      file_size = self.update.channel_post.document.file_size
+      file_mimetype = self.update.channel_post.document.mime_type
+      file_by = self.update.channel_post.chat.id
+        # make backup of file
+      if file_mimetype in self.mimetypes:
+        #file_data = "`{id}` -- *{name}*\n_{size}_ | {mimetype}\n\nby: `#id{uid}`".format(id=file_id,name=file_name,size=file_size,mimetype=file_mimetype,uid=file_by)
+          
+        try:
+          db.execute('insert into files values ("", ?, ?, ?, ?, ?)', (file_id, file_name, file_size, file_mimetype, file_by))
+          conn.commit()
+          
+        except sqlite3.IntegrityError:
+          conn.close()
+          return
+
+    if self.update.channel_post.entities:
+      self.post = misc.parserEntities(self.update.channel_post.entities, self.update.channel_post.text)
+      if not self.post:
+        return
+      
+      snet.rdSubmit(self.post)
+      snet.twPost(self.post)
+
+  def tgInline(self):
+
+    qid = self.update.inline_query.id
+    
+    if self.update.inline_query.query:
+      value = self.update.inline_query.query
+      textquery = [
+      telegram.InlineQueryResultArticle(
+          id=4,
+          title="text",
+          input_message_content=telegram.InputTextMessageContent(
+            message_text=value,
+            parse_mode=telegram.ParseMode.MARKDOWN
+          )
+        )
+      ]
+      self.bot.answerInlineQuery(inline_query_id=qid, results=textquery)
+      return
+    
+    inlinequery = [
+      telegram.InlineQueryResultArticle(
+        id=uuid4(),
+        title="cyberpunkrs",
+        input_message_content=telegram.InputTextMessageContent(
+          message_text="@cyberpunkrs",
+          parse_mode="Markdown"
+        ),
+        url="https://t.me/cyberpunkrs"
+      ),
+      telegram.InlineQueryResultArticle(
+        id=uuid4(),
+        title="cyberpub",
+        input_message_content=telegram.InputTextMessageContent(
+          message_text="[cyberpub](https://reddit.com/r/cyberpub)",
+          parse_mode="Markdown"
+        ),
+      )
+    ]
+    
+    self.bot.answerInlineQuery(inline_query_id=qid, results=inlinequery)
+    
+    
+
+if __name__ == '__main__':
+  bot = main()
+  btobj = telegram.Bot(token)
+  bot.runBot(btobj)
